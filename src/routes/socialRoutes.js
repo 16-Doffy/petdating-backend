@@ -14,6 +14,12 @@ router.post('/like', auth, async (req, res) => {
 
     const myPet = await Pet.findOne({ ownerId: req.userId });
     if (!myPet) return res.status(400).json({ message: 'Create pet profile first' });
+    if (myPet._id.toString() === String(toPetId)) {
+      return res.status(400).json({ message: 'Cannot like your own pet' });
+    }
+
+    const targetPet = await Pet.findById(toPetId);
+    if (!targetPet) return res.status(404).json({ message: 'Target pet not found' });
 
     await Like.findOneAndUpdate(
       { fromPetId: myPet._id, toPetId },
@@ -113,7 +119,16 @@ router.get('/matches', auth, async (req, res) => {
       .sort({ createdAt: -1 })
       .lean();
 
-    res.json({ matches: matches.map((m) => ({ ...m, id: m._id.toString() })) });
+    const deduped = new Map();
+
+    matches.forEach((match) => {
+      const pairKey = [match.pet1.toString(), match.pet2.toString()].sort().join(':');
+      if (!deduped.has(pairKey)) {
+        deduped.set(pairKey, { ...match, id: match._id.toString() });
+      }
+    });
+
+    res.json({ matches: Array.from(deduped.values()) });
   } catch (error) {
     res.status(500).json({ message: 'Failed to load matches', error: error.message });
   }

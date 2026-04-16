@@ -1,8 +1,15 @@
 const express = require('express');
 const adminAuth = require('../middleware/admin');
 const User = require('../models/User');
+const bcrypt = require('bcryptjs');
 
 const router = express.Router();
+const normalizeEmail = (value = '') => value.toLowerCase().trim();
+const buildUsername = (email = '') =>
+  normalizeEmail(email)
+    .replace(/@.*/, '')
+    .replace(/[^a-z0-9._-]/g, '_')
+    .slice(0, 32) || `admin_${Date.now()}`;
 
 // GET /admin/dashboard — Thống kê tổng quan
 router.get('/dashboard', adminAuth, async (req, res) => {
@@ -115,15 +122,16 @@ router.post('/create-admin', adminAuth, async (req, res) => {
       return res.status(400).json({ message: 'Email và password là bắt buộc' });
     }
 
-    const existing = await User.findOne({ email: email.toLowerCase().trim() });
+    const normalizedEmail = normalizeEmail(email);
+    const existing = await User.findOne({ email: normalizedEmail });
     if (existing) {
       return res.status(409).json({ message: 'Email đã tồn tại' });
     }
 
-    const bcrypt = require('bcryptjs');
     const passwordHash = await bcrypt.hash(password, 10);
     const user = await User.create({
-      email,
+      email: normalizedEmail,
+      username: buildUsername(normalizedEmail),
       passwordHash,
       role: 'admin',
     });

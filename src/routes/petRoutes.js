@@ -9,15 +9,43 @@ const Message = require('../models/Message');
 
 const router = express.Router();
 
+const inferPetType = (payload = {}) => {
+  if (payload.type === 'Dog' || payload.type === 'Cat') return payload.type;
+
+  const source = [
+    payload.breed,
+    payload.name,
+    payload.bio,
+    Array.isArray(payload.tags) ? payload.tags.join(' ') : '',
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+
+  const catKeywords = ['cat', 'meo', 'mèo', 'anh', 'mun', 'mướp', 'scottish', 'persian'];
+  const dogKeywords = ['dog', 'cho', 'chó', 'corgi', 'poodle', 'husky', 'retriever', 'becgie'];
+
+  if (catKeywords.some((keyword) => source.includes(keyword))) return 'Cat';
+  if (dogKeywords.some((keyword) => source.includes(keyword))) return 'Dog';
+  return 'Dog';
+};
+
+const toClientPet = (pet) => ({
+  ...pet,
+  id: pet._id.toString(),
+  ownerId: pet.ownerId?.toString?.() ?? pet.ownerId,
+  type: inferPetType(pet),
+});
+
 router.post('/me', auth, async (req, res) => {
   try {
-    const payload = req.body;
+    const payload = { ...req.body, type: inferPetType(req.body) };
     const pet = await Pet.findOneAndUpdate(
       { ownerId: req.userId },
       { ...payload, ownerId: req.userId },
       { new: true, upsert: true, setDefaultsOnInsert: true }
     ).lean();
-    res.status(201).json({ pet: { ...pet, id: pet._id.toString() } });
+    res.status(201).json({ pet: toClientPet(pet) });
   } catch (error) {
     res.status(500).json({ message: 'Failed to save pet profile', error: error.message });
   }
@@ -27,7 +55,7 @@ router.get('/me', auth, async (req, res) => {
   try {
     const pet = await Pet.findOne({ ownerId: req.userId }).lean();
     if (!pet) return res.json({ pet: null });
-    res.json({ pet: { ...pet, id: pet._id.toString() } });
+    res.json({ pet: toClientPet(pet) });
   } catch (error) {
     res.status(500).json({ message: 'Failed to load pet profile', error: error.message });
   }
@@ -38,7 +66,7 @@ router.get('/explore', auth, async (req, res) => {
     const myPet = await Pet.findOne({ ownerId: req.userId }).lean();
     const query = myPet ? { _id: { $ne: myPet._id } } : {};
     const pets = await Pet.find(query).lean();
-    res.json({ pets: pets.map((p) => ({ ...p, id: p._id.toString() })) });
+    res.json({ pets: pets.map(toClientPet) });
   } catch (error) {
     res.status(500).json({ message: 'Failed to load explore pets', error: error.message });
   }
@@ -48,7 +76,7 @@ router.get('/:petId', auth, async (req, res) => {
   try {
     const pet = await Pet.findById(req.params.petId).lean();
     if (!pet) return res.status(404).json({ message: 'Pet not found' });
-    res.json({ pet: { ...pet, id: pet._id.toString() } });
+    res.json({ pet: toClientPet(pet) });
   } catch (error) {
     res.status(500).json({ message: 'Failed to load pet detail', error: error.message });
   }
