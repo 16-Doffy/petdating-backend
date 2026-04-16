@@ -7,6 +7,13 @@ const Pet = require('../models/Pet');
 
 const router = express.Router();
 
+const toClientPet = (pet) => ({
+  ...pet,
+  id: pet._id.toString(),
+  ownerId: pet.ownerId?.toString?.() ?? pet.ownerId,
+  type: pet.type || 'Dog',
+});
+
 router.post('/like', auth, async (req, res) => {
   try {
     const { toPetId } = req.body;
@@ -131,6 +138,45 @@ router.get('/matches', auth, async (req, res) => {
     res.json({ matches: Array.from(deduped.values()) });
   } catch (error) {
     res.status(500).json({ message: 'Failed to load matches', error: error.message });
+  }
+});
+
+router.get('/liked-ids', auth, async (req, res) => {
+  try {
+    const myPet = await Pet.findOne({ ownerId: req.userId });
+    if (!myPet) return res.json({ likedIds: [] });
+
+    const likes = await Like.find({ fromPetId: myPet._id }).lean();
+    res.json({ likedIds: likes.map((l) => l.toPetId.toString()) });
+  } catch (error) {
+    res.status(500).json({ message: 'Failed to load liked pets', error: error.message });
+  }
+});
+
+router.get('/likes', auth, async (req, res) => {
+  try {
+    const myPet = await Pet.findOne({ ownerId: req.userId });
+    if (!myPet) return res.json({ likedPets: [] });
+
+    const likes = await Like.find({ fromPetId: myPet._id }).lean();
+    const petIds = likes.map((l) => l.toPetId);
+    const pets = await Pet.find({ _id: { $in: petIds } }).lean();
+
+    res.json({ likedPets: pets.map(toClientPet) });
+  } catch (error) {
+    res.status(500).json({ message: 'Failed to load liked pets', error: error.message });
+  }
+});
+
+router.delete('/likes/:petId', auth, async (req, res) => {
+  try {
+    const myPet = await Pet.findOne({ ownerId: req.userId });
+    if (!myPet) return res.status(400).json({ message: 'Create pet profile first' });
+
+    await Like.findOneAndDelete({ fromPetId: myPet._id, toPetId: req.params.petId });
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ message: 'Failed to unlike', error: error.message });
   }
 });
 
