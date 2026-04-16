@@ -5,11 +5,15 @@ const User = require('../models/User');
 
 const router = express.Router();
 const normalizeEmail = (value = '') => value.toLowerCase().trim();
-const buildUsername = (email = '') =>
-  normalizeEmail(email)
+const buildUsername = (email = '') => {
+  const base = normalizeEmail(email)
     .replace(/@.*/, '')
     .replace(/[^a-z0-9._-]/g, '_')
-    .slice(0, 32) || `user_${Date.now()}`;
+    .slice(0, 32);
+  if (!base) return `user_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+  return base;
+};
+
 
 const toClient = (user) => ({
   id: user._id.toString(),

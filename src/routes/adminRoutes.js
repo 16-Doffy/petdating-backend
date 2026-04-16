@@ -1,6 +1,7 @@
 const express = require('express');
 const adminAuth = require('../middleware/admin');
 const User = require('../models/User');
+const Transaction = require('../models/Transaction');
 const bcrypt = require('bcryptjs');
 
 const router = express.Router();
@@ -14,7 +15,7 @@ const buildUsername = (email = '') =>
 // GET /admin/dashboard — Thống kê tổng quan
 router.get('/dashboard', adminAuth, async (req, res) => {
   try {
-    const [totalUsers, vipUsers, recentSignups, vipPackages] = await Promise.all([
+    const [totalUsers, vipUsers, recentSignups, vipPackages, transactions] = await Promise.all([
       User.countDocuments(),
       User.countDocuments({ 'vipStatus.isActive': true }),
       User.find({ role: 'user' })
@@ -26,6 +27,7 @@ router.get('/dashboard', adminAuth, async (req, res) => {
         { $match: { 'vipStatus.isActive': true } },
         { $group: { _id: '$vipStatus.package', count: { $sum: 1 } } },
       ]),
+      Transaction.find({ status: 'completed' }).lean(),
     ]);
 
     const packageStats = {
@@ -38,12 +40,49 @@ router.get('/dashboard', adminAuth, async (req, res) => {
       }
     }
 
+    // Tính doanh thu từ Transaction (chính xác hơn)
+    const totalRevenue = transactions.reduce((sum, t) => sum + (t.amount || 0), 0);
+
+    // Doanh thu 7 ngày gần đây
+    const now = new Date();
+    const last7Days = [];
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date(now);
+      d.setDate(d.getDate() - i);
+      const dayStart = new Date(d.setHours(0, 0, 0, 0));
+      const dayEnd = new Date(d.setHours(23, 59, 59, 999));
+      const dayRevenue = transactions
+        .filter((t) => {
+          const ct = new Date(t.createdAt);
+          return ct >= dayStart && ct <= dayEnd;
+        })
+        .reduce((sum, t) => sum + (t.amount || 0), 0);
+      last7Days.push({
+        date: dayStart.toISOString().slice(0, 10),
+        label: dayStart.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' }),
+        revenue: dayRevenue,
+      });
+    }
+
+    // Top buyer
+    const byUser = {};
+    for (const t of transactions) {
+      byUser[t.userEmail] = (byUser[t.userEmail] || 0) + t.amount;
+    }
+    const topBuyers = Object.entries(byUser)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
+      .map(([email, total]) => ({ email, total }));
+
     res.json({
       totalUsers,
       vipUsers,
       freeUsers: totalUsers - vipUsers,
-      totalRevenue: packageStats.spotlight_name * 29000 + packageStats.spotlight_profile * 49000,
+      totalRevenue,
+      totalOrders: transactions.length,
       packageStats,
+      last7Days,
+      topBuyers,
       recentSignups: recentSignups.map((u) => ({
         email: u.email,
         joinedAt: u.createdAt,
@@ -139,6 +178,40 @@ router.post('/create-admin', adminAuth, async (req, res) => {
     res.status(201).json({ message: 'Admin created', userId: user._id.toString() });
   } catch (error) {
     res.status(500).json({ message: 'Create admin failed', error: error.message });
+  }
+});
+
+// GET /admin/transactions — Tất cả giao dịch (phân trang)
+router.get('/transactions', adminAuth, async (req, res) => {
+  try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 30;
+    const skip = (page - 1) * limit;
+
+    const [transactions, total] = await Promise.all([
+      Transaction.find({ status: 'completed' })
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .lean(),
+      Transaction.countDocuments({ status: 'completed' }),
+    ]);
+
+    res.json({
+      transactions: transactions.map((t) => ({
+        orderId: t.orderId,
+        email: t.userEmail,
+        packageName: t.packageName,
+        amount: t.amount,
+        paymentMethod: t.paymentMethod,
+        createdAt: t.createdAt,
+      })),
+      total,
+      page,
+      totalPages: Math.ceil(total / limit),
+    });
+  } catch (error) {
+    res.status(500).json({ message: 'Transactions error', error: error.message });
   }
 });
 
